@@ -28,8 +28,9 @@ def transcribe_audio(file_path: str, lang_code: str) -> str:
         # Use Indic Conformer for regional languages
         return transcribe_with_conformer(file_path, lang_code)
 
-def transcribe_with_conformer(audio_path: str, lang_code: str) -> str:
+def transcribe_with_conformer(audio_path: str, user_lang: str) -> str:
     try:
+        lang_code = LANG_MAP.get(user_lang.lower())
         if lang_code is None:
             raise ValueError(f"Unsupported language: {user_lang}")
 

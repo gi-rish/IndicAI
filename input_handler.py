@@ -41,8 +41,6 @@ def record_audio(filename="input.wav", fs=16000, max_duration=10, silence_durati
 def get_user_input(mode: str, lang_code: str) -> str:
     if mode == "voice":
         record_audio()
-        print("lang_code",lang_code)
-
         if lang_code == "nglish":
             result = transcribe_with_whisper("input.wav")
         else:

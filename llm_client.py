@@ -1,7 +1,7 @@
 
 from openai import OpenAI
 
-client = OpenAI(api_key="sk-proj-_")
+client = OpenAI(api_key="")
 
 
 
