@@ -1,0 +1,17 @@
+fastapi
+uvicorn
+whisper
+torch
+transformers
+sentence-transformers
+chromadb
+gtts
+pydub
+numpy
+tqdm
+playsound
+soundfile
+librosa
+openai
+python-multipart
+
