@@ -4,7 +4,7 @@ import chromadb
 from sentence_transformers import SentenceTransformer
 
 # Connect to Chroma server
-client = chromadb.HttpClient(host="localhost", port=8000)
+client = chromadb.HttpClient(host="localhost", port=8002)
 collection = client.get_or_create_collection("language_embeddings")
 
 # Define sample phrases per language (in Latin script for now)

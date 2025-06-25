@@ -13,6 +13,7 @@ from llm_client import get_gpt_response
 from asr_client import transcribe_audio
 from translator import translate_to_english, translate_back
 from tts import speak_text
+from tts import synthesize_and_save_audio
 
 # Language name to code mapping (for Indic AI / translation)
 LANG_CODE_MAP = {
@@ -74,7 +75,9 @@ def transcribe(file_path="input.wav"):
 
 # --------------- Step 3: Detect Language ----------------
 def detect_language(text):
-    client = chromadb.HttpClient(host="localhost", port=8000)
+    print(text)
+    client = chromadb.HttpClient(host="localhost", port=8002)
+
     collection = client.get_or_create_collection("language_embeddings")
     embedder = SentenceTransformer("all-MiniLM-L6-v2")
     embedding = embedder.encode([text])[0]
@@ -86,52 +89,51 @@ def detect_language(text):
     return "unknown"
 
 # --------------- Step 4: Response Routing ----------------
-def get_response(text=None, lang="english", chat_history=None, audio_file_path=None, input_mode="voice"):
-    if chat_history is None:
-        chat_history = []
-
+def get_response(text, lang, chat_history, audio_file_path=None, input_mode="text"):
     if lang == "english":
-        if not text:
-            raise ValueError("Text input is required for English")
-        
         print("[Using GPT for response]")
         chat_history.append({"role": "user", "content": text})
         reply = get_gpt_response(chat_history)
         chat_history.append({"role": "assistant", "content": reply})
-        return reply
 
-    # For non-English languages
-    print("[Using Indic AI for response]")
-    lang_code = LANG_CODE_MAP.get(lang)
+        audio_path = synthesize_and_save_audio(reply, "en")
 
-    if not lang_code:
-        raise ValueError(f"Unsupported language: {lang}")
+        return {
+            "text_response": reply,
+            "audio_response_path": audio_path
+        }
 
-    if input_mode == "voice":
-        if not audio_file_path:
-            raise ValueError("Audio file path is required for voice mode in non-English languages")
-        regional_transcript = transcribe_audio(audio_file_path, lang)
-        print(f"[Regional Transcription - {lang.upper()}]: {regional_transcript}")
     else:
-        if not text:
-            raise ValueError("Text input is required in text mode")
-        regional_transcript = text
+        print("[Using Indic AI for response]")
+        lang_code = LANG_CODE_MAP.get(lang, "hi")
+        print(lang_code)
+
+        # 🛠️ Decide the regional input: from audio or direct text
+        if input_mode == "voice":
+            if audio_file_path is None:
+                raise ValueError("Audio file path is required for non-English voice mode")
+            regional_transcript = transcribe_audio(audio_file_path, lang)
+        else:
+            regional_transcript = text
+
         print(f"[Received Regional Text - {lang.upper()}]: {regional_transcript}")
+        english_input = translate_to_english(regional_transcript, lang_code)
+        print("[Translated to English]:", english_input)
 
-    # Translate to English
-    english_input = translate_to_english(regional_transcript, lang_code)
-    print("[Translated to English]:", english_input)
+        chat_history.append({"role": "user", "content": english_input})
+        reply_english = get_gpt_response(chat_history)
+        chat_history.append({"role": "assistant", "content": reply_english})
 
-    # Get GPT response
-    chat_history.append({"role": "user", "content": english_input})
-    reply_english = get_gpt_response(chat_history)
-    chat_history.append({"role": "assistant", "content": reply_english})
+        reply_regional = translate_back(reply_english, lang_code)
+        print(f"[Translated to {lang.upper()}]:", reply_regional)
 
-    # Translate back
-    reply_regional = translate_back(reply_english, lang_code)
-    print(f"[Translated to {lang.upper()}]:", reply_regional)
+        audio_path = synthesize_and_save_audio(reply_regional, lang_code)
 
-    return reply_regional
+        return {
+            "text_response": reply_regional,
+            "audio_response_path": audio_path
+        }
+
 
 
 # --------------- Step 5: Main Flow ----------------
