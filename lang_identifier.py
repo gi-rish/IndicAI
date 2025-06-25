@@ -86,32 +86,53 @@ def detect_language(text):
     return "unknown"
 
 # --------------- Step 4: Response Routing ----------------
-def get_response(text, lang, chat_history, audio_file_path=None):
+def get_response(text=None, lang="english", chat_history=None, audio_file_path=None, input_mode="voice"):
+    if chat_history is None:
+        chat_history = []
+
     if lang == "english":
+        if not text:
+            raise ValueError("Text input is required for English")
+        
         print("[Using GPT for response]")
         chat_history.append({"role": "user", "content": text})
         reply = get_gpt_response(chat_history)
         chat_history.append({"role": "assistant", "content": reply})
         return reply
-    else:
-        print("[Using Indic AI for response]")
-        lang_code = LANG_CODE_MAP.get(lang, "en")
 
-        if audio_file_path is None:
-            raise ValueError("Audio file path is required for non-English languages")
+    # For non-English languages
+    print("[Using Indic AI for response]")
+    lang_code = LANG_CODE_MAP.get(lang)
 
+    if not lang_code:
+        raise ValueError(f"Unsupported language: {lang}")
+
+    if input_mode == "voice":
+        if not audio_file_path:
+            raise ValueError("Audio file path is required for voice mode in non-English languages")
         regional_transcript = transcribe_audio(audio_file_path, lang)
-        print("[Regional Transcription]:", regional_transcript)
-        english_input = translate_to_english(regional_transcript, lang_code)
-        print("[Translated to English]:", english_input)
+        print(f"[Regional Transcription - {lang.upper()}]: {regional_transcript}")
+    else:
+        if not text:
+            raise ValueError("Text input is required in text mode")
+        regional_transcript = text
+        print(f"[Received Regional Text - {lang.upper()}]: {regional_transcript}")
 
-        chat_history.append({"role": "user", "content": english_input})
-        reply_english = get_gpt_response(chat_history)
-        chat_history.append({"role": "assistant", "content": reply_english})
+    # Translate to English
+    english_input = translate_to_english(regional_transcript, lang_code)
+    print("[Translated to English]:", english_input)
 
-        reply_regional = translate_back(reply_english, lang_code)
-        print(f"[Translated to {lang.upper()}]:", reply_regional)
-        return reply_regional
+    # Get GPT response
+    chat_history.append({"role": "user", "content": english_input})
+    reply_english = get_gpt_response(chat_history)
+    chat_history.append({"role": "assistant", "content": reply_english})
+
+    # Translate back
+    reply_regional = translate_back(reply_english, lang_code)
+    print(f"[Translated to {lang.upper()}]:", reply_regional)
+
+    return reply_regional
+
 
 # --------------- Step 5: Main Flow ----------------
 def main():
@@ -131,7 +152,13 @@ def main():
 
         detected_lang = detect_language(input_text)
         audio_file_path = "input.wav" if mode == "voice" else None
-        response = get_response(input_text, detected_lang, chat_history, audio_file_path)
+        response = response = get_response(
+    text=input_text,
+    lang=detected_lang,
+    chat_history=chat_history,
+    input_mode="text"  
+)
+
         print(f"\n💬 [Final Response in {detected_lang.upper()}]: {response}\n")
 
         lang_code = LANG_CODE_MAP.get(detected_lang, "en")
