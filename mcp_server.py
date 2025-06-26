@@ -48,7 +48,8 @@ async def process_input(
 
         return {
             "text_response": result["text_response"],
-            "audio_response_path": result["audio_response_path"]
+            "audio_response_path": result["audio_response_path"],
+            "english_input":result["english_input"]
         }
 
     except Exception as e:

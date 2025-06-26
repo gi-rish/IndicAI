@@ -29,8 +29,11 @@ def speak_text(text, lang_code):
 
 def synthesize_and_save_audio(text, lang_code):
     filename = f"output_{uuid.uuid4()}.mp3"
+    output_dir = os.path.join("static", "audio")
+    os.makedirs(output_dir, exist_ok=True)
+    
+    file_path = os.path.join(output_dir, filename)
     tts = gTTS(text=text, lang=lang_code)
-    output_path = os.path.join("output", filename)
-    os.makedirs("output", exist_ok=True)
-    tts.save(output_path)
-    return output_path
+    tts.save(file_path)
+    
+    return f"/static/audio/{filename}"  # ✅ Return relative URL path

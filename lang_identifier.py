@@ -131,7 +131,8 @@ def get_response(text, lang, chat_history, audio_file_path=None, input_mode="tex
 
         return {
             "text_response": reply_regional,
-            "audio_response_path": audio_path
+            "audio_response_path": audio_path,
+            "english_input":english_input
         }
 
 
