@@ -1,7 +1,7 @@
 
 from openai import OpenAI
 
-client = OpenAI(api_key="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")
+client = OpenAI(api_key="")
 
 # System prompts for different stages of the microfinance loan process
 SYSTEM_PROMPTS = {
