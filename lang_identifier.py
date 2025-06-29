@@ -74,16 +74,51 @@ def transcribe(file_path="input.wav"):
 
 # --------------- Step 3: Detect Language ----------------
 def detect_language(text):
-    client = chromadb.HttpClient(host="localhost", port=8000)
-    collection = client.get_or_create_collection("language_embeddings")
-    embedder = SentenceTransformer("all-MiniLM-L6-v2")
-    embedding = embedder.encode([text])[0]
-    result = collection.query(query_embeddings=[embedding], n_results=1)
-    if result and result["metadatas"]:
-        lang = result["metadatas"][0][0]["lang"]
-        print("[Detected Language]:", lang)
-        return lang
-    return "unknown"
+    """Detect language using embeddings and handle transliterated text."""
+    # Dictionary of common words/phrases for each language to help with transliterated text
+    language_indicators = {
+        "hindi": ["kitna", "milega", "mujhe", "kaise", "kaisa", "kya", "hai", "hoga", "karenge", "karoge"],
+        "kannada": ["nanu", "nanage", "ninna", "hesaru", "beku", "illa", "enu", "yavaga", "hegide", "maadabeku"],
+        "tamil": ["enna", "enakku", "ungal", "peyar", "vendum", "illai", "eppozhuthu", "eppadi", "irukkirathu"],
+        "marathi": ["kiti", "milel", "mala", "kasa", "kay", "aahe", "hoil", "karanar", "karal", "pahije"]
+    }
+    
+    text_lower = text.lower()
+    text_words = text_lower.split()
+    
+    # Check for transliterated words in each language
+    language_scores = {}
+    for lang, indicators in language_indicators.items():
+        score = sum(1 for word in indicators if word in text_words)
+        if score > 0:
+            language_scores[lang] = score
+    
+    # If we found transliterated words, use the language with the highest score
+    if language_scores:
+        detected_lang = max(language_scores.items(), key=lambda x: x[1])[0]
+        print(f"[Detected Language]: {detected_lang} (transliteration heuristic)")
+        return detected_lang
+    
+    # Use embeddings for language detection as requested
+    try:
+        client = chromadb.HttpClient(host="localhost", port=8000)
+        collection = client.get_or_create_collection("language_embeddings")
+        embedder = SentenceTransformer("all-MiniLM-L6-v2")
+        embedding = embedder.encode([text])[0]
+        result = collection.query(query_embeddings=[embedding], n_results=1)
+        if result and result["metadatas"]:
+            lang = result["metadatas"][0][0]["lang"]
+            print("[Detected Language]:", lang)
+            
+            # Don't fallback to English for Latin script - it might be transliterated
+            # Instead, trust the embedding model's decision
+            return lang
+    except Exception as e:
+        print(f"[Embedding Detection Error]: {e}")
+    
+    # Default to English if detection fails
+    print("[Detected Language]: english (default)")
+    return "english"
 
 # --------------- Step 4: Response Routing ----------------
 def get_response(text=None, lang="english", chat_history=None, audio_file_path=None, input_mode="voice"):
@@ -150,19 +185,32 @@ def main():
             if input_text.lower() in ["exit", "quit"]:
                 break
 
+        # Detect language and verify it's correct
         detected_lang = detect_language(input_text)
-        audio_file_path = "input.wav" if mode == "voice" else None
-        response = response = get_response(
-    text=input_text,
-    lang=detected_lang,
-    chat_history=chat_history,
-    input_mode="text"  
-)
-
-        print(f"\n💬 [Final Response in {detected_lang.upper()}]: {response}\n")
-
+        print(f"[DEBUG] Detected language: {detected_lang}")
+        
+        # Get the language code for translation
         lang_code = LANG_CODE_MAP.get(detected_lang, "en")
-        speak_text(response, lang_code)
+        print(f"[DEBUG] Using language code for translation: {lang_code}")
+        
+        # Get response using the detected language
+        audio_file_path = "input.wav" if mode == "voice" else None
+        response = get_response(
+            text=input_text,
+            lang=detected_lang,
+            chat_history=chat_history,
+            input_mode="text"  
+        )
+
+        # Display the final response
+        print(f"\n💬 [Final Response in {detected_lang.upper()}]: {response}\n")
+        
+        # Text-to-speech if available
+        try:
+            speak_text(response, lang_code)
+        except Exception as e:
+            print(f"[TTS Error]: {e}")
+
 
 if __name__ == "__main__":
     main()
