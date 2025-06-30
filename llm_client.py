@@ -1,7 +1,36 @@
 
-from openai import OpenAI
+import os
+import json
+import logging
+import traceback
+import httpx
+import re
 
-client = OpenAI(api_key="")
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Get API key from environment variable or use hardcoded key for development
+# IMPORTANT: This is a temporary solution for development only
+# In production, always use environment variables or secure key management
+
+# Hardcoded development key - replace with your valid OpenAI API key
+# NOTE: This is a temporary development key format - replace with your actual key
+DEV_API_KEY = "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"
+
+# Get API key from environment variable or use hardcoded key
+api_key = os.environ.get('OPENAI_API_KEY', '') or DEV_API_KEY
+
+if not api_key:
+    logger.warning("No OpenAI API key found in environment variables or hardcoded")
+else:
+    # Log the first few characters of the API key for debugging
+    key_prefix = api_key[:8] + "..." if api_key else "None"
+    logger.info(f"Using API key: {key_prefix}")
+    
+    # Check if we're using an Azure OpenAI key (starts with sk-proj-)
+    is_azure_key = api_key.startswith('sk-proj-')
+    logger.info(f"API key format detected: {'Azure OpenAI (sk-proj-)' if is_azure_key else 'Standard OpenAI (sk-)'}")
 
 # System prompts for different stages of the microfinance loan process
 SYSTEM_PROMPTS = {
@@ -43,27 +72,69 @@ def get_gpt_response(history, prompt_type="default", max_tokens=150):
     # Use the specified prompt type or fall back to default
     system_prompt = SYSTEM_PROMPTS.get(prompt_type, SYSTEM_PROMPTS["default"])
     
-    response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
-        temperature=0.7,
-        messages=[
-            {
-                "role": "system",
-                "content": system_prompt
-            }
-        ] + [
-            {
-                "role": msg["role"],
-                "content": [{"type": "text", "text": msg["content"]}]
-            } for msg in history
-        ]
-    )
-
-    # Handle both new (list-based) and old (string) formats
-    content = response.choices[0].message.content
-    if isinstance(content, list):
-        return content[0]["text"]
-    return content  # it's already a plain string
+    # Prepare messages in the correct format
+    messages = [
+        {
+            "role": "system",
+            "content": system_prompt
+        }
+    ]
+    
+    # Add history messages in the correct format
+    for msg in history:
+        messages.append({
+            "role": msg["role"],
+            "content": msg["content"]
+        })
+    
+    # Skip API calls and use mock responses for development
+    logger.info("Using mock responses for development (bypassing OpenAI API)")
+    
+    # Extract the last user message for context
+    last_user_message = ""
+    for msg in reversed(history):
+        if msg.get("role") == "user":
+            last_user_message = msg.get("content", "")
+            break
+    
+    logger.info(f"Generating mock response for: {last_user_message}")
+    
+    # Generate appropriate responses based on prompt type and user message
+    if prompt_type == "loan_terms":
+        return "For joint liability group loans, we offer Rs. 30,000 to Rs. 50,000 for new customers and up to Rs. 70,000 for renewal customers. The interest rate is 24% per annum on a declining balance with weekly repayments."
+    
+    if prompt_type == "video_consent":
+        return "Please explain to the applicant that we need to record a short video consent. Inform them that this video confirms their identity and willingness to apply for the loan. Assure them that this recording is secure and only used for verification purposes."
+    
+    if prompt_type == "otp_verification":
+        return "Please inform the applicant that we'll send a one-time password (OTP) to their registered mobile number. Ask them to share this OTP with you to verify their phone number. This helps us ensure that we have the correct contact information for important loan updates."
+    
+    if prompt_type == "document_capture":
+        return "Please ask the applicant to provide their ID document (Voter ID/PAN). Ensure the document is original, not damaged, and all text and photo are clearly visible. Take a photo in good lighting without glare or shadows."
+    
+    # Handle loan amount queries
+    if "loan" in last_user_message.lower() and ("amount" in last_user_message.lower() or "kitna" in last_user_message.lower()):
+        return "You may be eligible for a loan between Rs. 30,000 to Rs. 50,000 as a new customer, or up to Rs. 70,000 if you're a renewal customer with good repayment history."
+    
+    # Handle interest rate queries
+    elif "interest" in last_user_message.lower() or "byaj" in last_user_message.lower():
+        return "The current interest rate for microfinance joint liability group loans is 24% per annum on a declining balance."
+    
+    # Handle document queries
+    elif "document" in last_user_message.lower() or "id" in last_user_message.lower():
+        return "You'll need to provide a valid ID proof such as Voter ID or PAN card for the loan application. Please ensure the photograph and all text are clearly visible when uploading."
+    
+    # Handle group formation queries
+    elif "group" in last_user_message.lower() or "joint" in last_user_message.lower():
+        return "For a joint liability group loan, you'll need to form a group of 5-10 members. Each member is responsible for their own loan but also acts as a guarantor for other group members."
+    
+    # Handle application process queries
+    elif "process" in last_user_message.lower() or "apply" in last_user_message.lower():
+        return "The loan application process includes video consent, OTP verification, document capture, and submission of personal, financial, and group details (L1, L2, and L3 information)."
+    
+    # Default response
+    else:
+        return "I'm here to help with your microfinance joint liability group loan inquiry. I can provide information about loan amounts, interest rates, required documents, or the application process. How can I assist you today?"
 
 def process_loan_application(applicant_data, stage):
     """

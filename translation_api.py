@@ -26,7 +26,7 @@ import io
 load_dotenv()
 
 # Initialize FastAPI app
-app = FastAPI(title="Indic AI Translation API")
+app = FastAPI(title="Indic AI Translation API", description="Translation API with voice input support for Indic languages")
 
 # Initialize Minio client (optional)
 minio_client = None
