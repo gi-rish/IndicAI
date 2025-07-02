@@ -15,18 +15,25 @@ if not api_key:
     except ImportError:
         pass
 
-# Import and configure OpenAI for version 1.0.0+
-from openai import OpenAI
-
-# Initialize the client
-client = OpenAI(api_key=api_key)
+# Import and configure OpenAI with version compatibility
+try:
+    # For OpenAI Python package >= 1.0.0
+    from openai import OpenAI
+    client = OpenAI(api_key=api_key)
+    print("Using OpenAI Python SDK >= 1.0.0")
+except ImportError:
+    # For older versions of OpenAI Python package
+    import openai
+    openai.api_key = api_key
+    client = openai
+    print("Using OpenAI Python SDK < 1.0.0")
 
 def get_gpt_response(history):
     # Verify API key is set before making the request
-    if not client.api_key:
+    if hasattr(client, 'api_key') and not client.api_key:
         raise ValueError("OpenAI API key is not set. Please set the OPENAI_API_KEY environment variable.")
 
-    # Format messages for newer OpenAI API version
+    # Format messages for OpenAI API
     messages = [
         {
             "role": "system",
@@ -62,12 +69,25 @@ Keep answers brief, clear, and tailored to microfinance contexts in rural India.
             "content": msg["content"]
         })
     
-    response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
-        max_tokens=100, 
-        temperature=0.7,
-        messages=messages
-    )
-    
-    # Return the content - in the newer OpenAI API version
-    return response.choices[0].message.content
+    try:
+        # For OpenAI Python SDK >= 1.0.0
+        if hasattr(client, 'chat') and hasattr(client.chat, 'completions'):
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                max_tokens=100, 
+                temperature=0.7,
+                messages=messages
+            )
+            return response.choices[0].message.content
+        # For older versions of OpenAI Python package
+        else:
+            response = client.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                max_tokens=100, 
+                temperature=0.7,
+                messages=messages
+            )
+            return response['choices'][0]['message']['content']
+    except Exception as e:
+        print(f"Error calling OpenAI API: {e}")
+        return "I'm sorry, I couldn't process your request due to an API error."
