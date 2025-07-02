@@ -12,6 +12,7 @@ from datetime import timedelta
 from gtts import gTTS
 from dotenv import load_dotenv
 import time
+import subprocess
 from typing import Optional, Dict, Any
 
 # Import our existing language detection and translation functions
@@ -197,10 +198,40 @@ def process_audio(text, lang_code, audio_id=None):
         return None
 
 
+def convert_to_pcm_wav(input_file):
+    """Convert an audio file to PCM WAV format (16-bit, 16kHz, mono)
+    
+    Args:
+        input_file: Path to the input audio file
+        
+    Returns:
+        Path to the converted PCM WAV file
+    """
+    try:
+        # Create a temporary WAV file for the output
+        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as wav_file:
+            output_file = wav_file.name
+        
+        # Use ffmpeg to convert to PCM WAV (16-bit, 16kHz, mono)
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", input_file, 
+             "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", output_file],
+            check=True, capture_output=True
+        )
+        
+        return output_file
+    except Exception as e:
+        print(f"Error converting audio: {e}")
+        # If conversion fails, return the original file
+        return input_file
+
 def transcribe_audio_from_minio(voice_key):
     """Retrieve audio file from MinIO and transcribe it to text"""
     if not USE_MINIO or not minio_client:
         raise HTTPException(status_code=500, detail="MinIO not configured or unavailable")
+    
+    temp_path = None
+    converted_path = None
     
     try:
         bucket_name = os.getenv("MINIO_BUCKET", "indic-ai-audio")
@@ -220,17 +251,22 @@ def transcribe_audio_from_minio(voice_key):
                     raise HTTPException(status_code=404, detail="Voice file not found")
                 raise HTTPException(status_code=500, detail=f"Error retrieving voice file: {str(e)}")
         
+        # Convert the audio to PCM WAV format
+        print(f"Converting audio file to PCM WAV format...")
+        converted_path = convert_to_pcm_wav(temp_path)
+        print(f"Conversion complete. Using file: {converted_path}")
+        
         # Initialize speech recognizer
         recognizer = sr.Recognizer()
         
         # Transcribe the audio file
-        with sr.AudioFile(temp_path) as source:
+        with sr.AudioFile(converted_path) as source:
             audio_data = recognizer.record(source)
             
             try:
                 # First try to recognize with Google (requires internet)
                 text = recognizer.recognize_google(audio_data)
-                print(f"[Voice Transcription]: {text}")
+                print(f"[Voice Input]: Successfully transcribed voice input: '{text}'")
                 return text
             except sr.UnknownValueError:
                 raise HTTPException(status_code=400, detail="Could not understand audio")
@@ -239,7 +275,7 @@ def transcribe_audio_from_minio(voice_key):
                 try:
                     # Use Sphinx for offline recognition
                     text = recognizer.recognize_sphinx(audio_data)
-                    print(f"[Voice Transcription (Fallback)]: {text}")
+                    print(f"[Voice Input (Fallback)]: Successfully transcribed voice input: '{text}'")
                     return text
                 except:
                     raise HTTPException(status_code=400, detail="Failed to transcribe audio")
@@ -248,9 +284,18 @@ def transcribe_audio_from_minio(voice_key):
             raise HTTPException(status_code=500, detail=f"Error processing voice input: {str(e)}")
         raise e
     finally:
-        # Clean up the temporary file
-        if 'temp_path' in locals() and os.path.exists(temp_path):
-            os.unlink(temp_path)
+        # Clean up the temporary files
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.unlink(temp_path)
+            except:
+                pass
+        
+        if converted_path and os.path.exists(converted_path) and converted_path != temp_path:
+            try:
+                os.unlink(converted_path)
+            except:
+                pass
 
 @app.post("/translate", response_model=TranslationResponse)
 async def translate(request: TranslationRequest, background_tasks: BackgroundTasks):
