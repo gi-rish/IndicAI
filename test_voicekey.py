@@ -25,7 +25,7 @@ MINIO_BUCKET = "indic-ai-audio"
 MINIO_SECURE = False
 
 # API endpoint - using local server
-API_ENDPOINT = "http://localhost:8000/translate"
+API_ENDPOINT = "http://localhost:8080/translate"
 
 def create_test_audio(text, lang="hi"):
     """Create a test audio file directly in WAV format compatible with speech_recognition"""
@@ -223,38 +223,120 @@ def test_transliteration_issue():
         if upload_to_minio(audio_data, object_name):
             # Test the API
             test_translate_api_with_voicekey(object_name)
-        else:
-            print(f"Failed to upload audio for phrase {i+1}")
-        
-        print(f"{'='*50}")
 
-def main():
-    """Main function to test the voicekey feature"""
-    # Test a transliterated Hindi phrase
-    phrase = "tumhara nam kya hai"  # What is your name?
+def convert_to_pcm_wav(input_file):
+    """Convert an audio file to PCM WAV format (16-bit, 16kHz, mono)
     
-    print(f"\n{'='*50}")
-    print(f"Testing transliterated Hindi phrase: '{phrase}'")
-    
-    # Create a unique object name for MinIO
-    object_name = f"test_hi_trans_{uuid.uuid4()}"
-    
-    # Create audio file (use 'hi' as the language code for gTTS)
+    Args:
+        input_file: Path to the input audio file
+        
+    Returns:
+        Bytes of the converted PCM WAV file
+    """
     try:
-        print("Creating audio file...")
-        audio_data = create_test_audio(phrase, "hi")
-        print("Audio file created successfully")
+        print(f"Converting {input_file} to PCM WAV format...")
+        # Create a temporary WAV file
+        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as wav_file:
+            output_file = wav_file.name
+        
+        # Use ffmpeg to convert to PCM WAV (16-bit, 16kHz, mono)
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", input_file, 
+             "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", output_file],
+            check=True, capture_output=True
+        )
+        
+        # Read the converted WAV file
+        with open(output_file, 'rb') as f:
+            audio_data = f.read()
+        
+        # Clean up
+        os.unlink(output_file)
+        
+        print("Conversion successful")
+        return audio_data
+    except Exception as e:
+        print(f"Error converting audio: {e}")
+        raise
+
+def upload_existing_wav_file(file_path):
+    """Upload an existing WAV file to MinIO
+    
+    Args:
+        file_path: Path to the WAV file to upload
+        
+    Returns:
+        The object key (voiceKey) if successful, None otherwise
+    """
+    try:
+        print(f"\n{'='*50}")
+        print(f"Uploading existing WAV file: {file_path}")
+        
+        # Check if file exists
+        if not os.path.exists(file_path):
+            print(f"Error: File {file_path} does not exist")
+            return None
+        
+        # Convert to PCM WAV format
+        audio_data = convert_to_pcm_wav(file_path)
+        
+        # Generate a unique key for MinIO
+        object_key = f"existing_wav_{uuid.uuid4()}"
         
         # Upload to MinIO
         print("Uploading to MinIO...")
-        if upload_to_minio(audio_data, object_name):
-            print("Upload successful, testing API with voicekey...")
-            # Test the API
-            test_translate_api_with_voicekey(object_name)
+        if upload_to_minio(audio_data, object_key):
+            print(f"Upload successful! VoiceKey: {object_key}")
+            return object_key
         else:
-            print("Failed to upload audio")
+            print("Failed to upload audio to MinIO")
+            return None
     except Exception as e:
-        print(f"Error during test: {e}")
+        print(f"Error uploading file: {e}")
+        return None
+
+def main():
+    """Main function to test the voicekey feature"""
+    import sys
+    
+    # Check if a file path was provided as a command-line argument
+    if len(sys.argv) > 1 and sys.argv[1] == "--file":
+        if len(sys.argv) > 2:
+            file_path = sys.argv[2]
+            # Upload the existing WAV file
+            voice_key = upload_existing_wav_file(file_path)
+            if voice_key:
+                # Test the API with the voiceKey
+                test_translate_api_with_voicekey(voice_key)
+        else:
+            print("Error: No file path provided. Usage: python test_voicekey.py --file <path_to_wav_file>")
+    else:
+        # Default behavior: Test a transliterated Hindi phrase
+        phrase = "tumhara nam kya hai"  # What is your name?
+        
+        print(f"\n{'='*50}")
+        print(f"Testing transliterated Hindi phrase: '{phrase}'")
+        
+        # Create a unique object name for MinIO
+        object_name = f"test_hi_trans_{uuid.uuid4()}"
+        
+        # Create audio file (use 'hi' as the language code for gTTS)
+        try:
+            print("Creating audio file...")
+            print(f"Creating test audio for text: '{phrase}' in language: hi")
+            audio_data = create_test_audio(phrase, lang="hi")
+            print("Audio file created successfully")
+            
+            # Upload to MinIO
+            print("Uploading to MinIO...")
+            if upload_to_minio(audio_data, object_name):
+                print(f"Upload successful, testing API with voicekey...")
+                # Test the API with the voiceKey
+                test_translate_api_with_voicekey(object_name)
+            else:
+                print("Failed to upload audio to MinIO")
+        except Exception as e:
+            print(f"Error in main: {e}")
     
     print(f"{'='*50}")
 
