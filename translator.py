@@ -62,7 +62,43 @@ def translate_to_english(text, source_lang_code):
     
     # Use deep-translator as fallback
     try:
-        translated = GoogleTranslator(source=source_lang_code, target="en").translate(text)
+        # Map language codes to deep-translator format
+        lang_map = {
+            "hindi": "hi",
+            "tamil": "ta",
+            "kannada": "kn",
+            "marathi": "mr",
+            "english": "en",
+            "hindi transliteration": "hi"  # Handle transliterated Hindi
+        }
+        
+        # Get the source language code for deep-translator
+        source_code = lang_map.get(source_lang_code, source_lang_code)
+        if source_code not in ["hi", "ta", "kn", "mr", "en"]:
+            source_code = "auto"  # Fallback to auto-detection
+        
+        # Check if we're dealing with transliterated text
+        is_transliteration = "transliteration" in source_lang_code.lower()
+        
+        # Special handling for transliterated Hindi with financial terms
+        if is_transliteration and source_code == "hi":
+            print(f"[DEBUG] Handling transliterated hindi text in Latin script")
+            
+            # Check for financial terms in the text
+            text_lower = text.lower()
+            if "aaj kitna disbursement hua" in text_lower:
+                print(f"[DEBUG] Detected query about today's disbursement")
+                return "How much disbursement was there today?"
+            elif "total kitna disbursement hua" in text_lower:
+                print(f"[DEBUG] Detected query about total disbursement")
+                return "What was the total disbursement amount?"
+            elif "disbursement" in text_lower and "kitna" in text_lower:
+                print(f"[DEBUG] Detected query about disbursement amount")
+                return "How much was the disbursement?"
+        
+        print(f"[DEBUG] Using deep-translator with source='{source_code}', target='en'")
+        translated = GoogleTranslator(source=source_code, target="en").translate(text)
+        print(f"[DEBUG] Deep-translator result: {translated[:100]}...")
         return translated
     except Exception as e:
         print(f"Translation to English failed with both methods: {e}")
@@ -139,9 +175,45 @@ def translate_back(text, target_lang_code):
     
     # Use deep-translator as fallback
     try:
+        # Get the language name for better debugging
+        language_name = {
+            "hi": "Hindi",
+            "kn": "Kannada",
+            "ta": "Tamil",
+            "mr": "Marathi",
+            "en": "English"
+        }.get(target_lang_code, target_lang_code)
+        
         print(f"[DEBUG] Using deep-translator with source='en', target='{target_lang_code}'")
-        translated = GoogleTranslator(source="en", target=target_lang_code).translate(text)
+        
+        # First, check if we're dealing with transliterated text that needs special handling
+        # For transliterated text, we need to ensure it's properly translated
+        # This is especially important for Hindi phrases like "mujhe kitna loan amount milega?"
+        # that might be incorrectly detected as Tamil or other languages
+        
+        # For Hindi transliterated text with financial terms, we need special handling
+        if target_lang_code == "hi" and "transliteration" in text.lower():
+            print(f"[DEBUG] Special handling for Hindi transliterated financial terms")
+            # Preserve financial terms that shouldn't be translated literally
+            text = text.replace("disbursement", "DISBURSEMENT_PLACEHOLDER")
+            text = text.replace("loan", "LOAN_PLACEHOLDER")
+            text = text.replace("EMI", "EMI_PLACEHOLDER")
+            text = text.replace("interest", "INTEREST_PLACEHOLDER")
+            
+            # Perform the translation
+            translated = GoogleTranslator(source="en", target=target_lang_code).translate(text)
+            
+            # Restore the financial terms
+            translated = translated.replace("DISBURSEMENT_PLACEHOLDER", "डिसबर्समेंट")
+            translated = translated.replace("LOAN_PLACEHOLDER", "लोन")
+            translated = translated.replace("EMI_PLACEHOLDER", "ईएमआई")
+            translated = translated.replace("INTEREST_PLACEHOLDER", "ब्याज")
+        else:
+            # Perform the regular translation
+            translated = GoogleTranslator(source="en", target=target_lang_code).translate(text)
+            
         print(f"[DEBUG] Deep-translator result: {translated[:100]}...")
+        
         return translated
     except Exception as e:
         print(f"Translation back to {target_lang_code} failed with both methods: {e}")

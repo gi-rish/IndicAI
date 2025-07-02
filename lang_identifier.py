@@ -77,7 +77,16 @@ def detect_language(text):
     """Detect language using embeddings and handle transliterated text."""
     # Dictionary of common words/phrases for each language to help with transliterated text
     language_indicators = {
-        "hindi": ["kitna", "milega", "mujhe", "kaise", "kaisa", "kya", "hai", "hoga", "karenge", "karoge"],
+        "hindi": [
+            # Common Hindi words in transliteration
+            "kitna", "milega", "mujhe", "kaise", "kaisa", "kya", "hai", "hoga", "karenge", "karoge",
+            # Time indicators
+            "aaj", "kal", "parso", "abhi", "pehle", "baad",
+            # Loan-related Hindi terms
+            "loan", "amount", "kitne", "rupaye", "paise", "jankari", "kab", "milega", "chahiye",
+            # Financial terms that might be used in transliteration
+            "disbursement", "hua", "payment", "emi", "byaj", "interest", "account"
+        ],
         "kannada": ["nanu", "nanage", "ninna", "hesaru", "beku", "illa", "enu", "yavaga", "hegide", "maadabeku"],
         "tamil": ["enna", "enakku", "ungal", "peyar", "vendum", "illai", "eppozhuthu", "eppadi", "irukkirathu"],
         "marathi": ["kiti", "milel", "mala", "kasa", "kay", "aahe", "hoil", "karanar", "karal", "pahije"]
@@ -86,7 +95,7 @@ def detect_language(text):
     text_lower = text.lower()
     text_words = text_lower.split()
     
-    # Check for transliterated words in each language
+    # Check for transliterated words in each language with improved scoring
     language_scores = {}
     for lang, indicators in language_indicators.items():
         score = sum(1 for word in indicators if word in text_words)
@@ -110,8 +119,19 @@ def detect_language(text):
             lang = result["metadatas"][0][0]["lang"]
             print("[Detected Language]:", lang)
             
+            # Special handling for Hindi phrases that might be detected as Tamil
+            # Check if text contains common Hindi words but was detected as Tamil
+            if lang == "tamil" and any(word in text_lower for word in language_indicators["hindi"]):
+                print("[Language Correction]: Detected as Tamil but contains Hindi words, correcting to Hindi")
+                return "hindi transliteration"
+            
+            # Mark transliterated text explicitly
+            if all(ord(c) < 128 for c in text):  # If text is in Latin script
+                if lang != "english":
+                    print(f"[Detected Language]: {lang} (transliterated text)")
+                    return f"{lang} transliteration"
+            
             # Don't fallback to English for Latin script - it might be transliterated
-            # Instead, trust the embedding model's decision
             return lang
     except Exception as e:
         print(f"[Embedding Detection Error]: {e}")

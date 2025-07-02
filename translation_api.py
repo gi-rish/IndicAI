@@ -319,15 +319,13 @@ async def translate(request: TranslationRequest, background_tasks: BackgroundTas
         
         # Detect language with special handling for transliterated text
         detected_lang = detect_language(request.text)
+        is_transliteration = "transliteration" in detected_lang  # Check if it's transliterated text
         
-        # Check if it's a transliteration detection
-        is_transliteration = False
-        if "transliteration" in detected_lang:
-            is_transliteration = True
-            detected_lang = detected_lang.split(" ")[0]  # Extract just the language name
-            print(f"[Detected Language]: {detected_lang} (transliterated text)")
-        else:
-            print(f"[Detected Language]: {detected_lang}")
+        # Clean up the detected language name if it contains 'transliteration'
+        if is_transliteration:
+            detected_lang = detected_lang.replace(" transliteration", "")
+        
+        print(f"[Detected Language]: {detected_lang} ({'transliterated' if is_transliteration else ''} text)")
         
         # Get language code
         lang_code = LANG_CODE_MAP.get(detected_lang, "en")
@@ -358,8 +356,47 @@ async def translate(request: TranslationRequest, background_tasks: BackgroundTas
                         dashboard_result = dashboard_response.json()
                         print(f"[Dashboard Agent Response]: {json.dumps(dashboard_result, indent=2)}")
                         
-                        # Pass the english_text to GPT for a response
-                        gpt_prompt = f"Here is a user query: {english_text}. Respond with 'Sure, here are your results.' without asking for any additional information."
+                        # Generate a summary of the dashboard response data
+                        summary = ""
+                        try:
+                            if isinstance(dashboard_result, dict) and "result" in dashboard_result:
+                                result_data = dashboard_result["result"]
+                                if isinstance(result_data, list) and len(result_data) > 0:
+                                    # Get the number of items
+                                    num_items = len(result_data)
+                                    
+                                    # Extract key information from the first item
+                                    sample_item = result_data[0]
+                                    key_fields = []
+                                    
+                                    # Identify important fields that exist in the data
+                                    if "disbursed_date" in sample_item:
+                                        key_fields.append("disbursement date")
+                                    if "disbursed_amount" in sample_item:
+                                        key_fields.append("amount")
+                                    if "loan_acc_number" in sample_item:
+                                        key_fields.append("loan account number")
+                                    if "cust_id" in sample_item:
+                                        key_fields.append("customer ID")
+                                    if "product_code" in sample_item:
+                                        key_fields.append("product code")
+                                    
+                                    # Create a summary
+                                    if key_fields:
+                                        fields_text = ", ".join(key_fields)
+                                        summary = f"Found {num_items} records containing {fields_text}."
+                                    else:
+                                        summary = f"Found {num_items} records in the result."
+                                else:
+                                    summary = "No records found in the result."
+                            else:
+                                summary = "The query was processed successfully."
+                        except Exception as e:
+                            print(f"[Summary Generation Error]: {e}")
+                            summary = "The query was processed, but I couldn't generate a summary of the results."
+                        
+                        # Pass the english_text and summary to GPT for a response
+                        gpt_prompt = f"Here is a user query: {english_text}. The query returned data with the following summary: {summary}. Respond with 'Sure, here are your results: {summary}' without asking for any additional information."
                         gpt_response = get_gpt_response([{"role": "user", "content": gpt_prompt}])
                             
                         # Translate the GPT response back to the original language
