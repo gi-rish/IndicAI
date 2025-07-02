@@ -121,7 +121,7 @@ def detect_language(text):
     # Use embeddings for language detection as requested
     try:
         # Connect to local ChromaDB server
-        client = chromadb.HttpClient(host="localhost", port=8001)
+        client = chromadb.HttpClient(host="3.6.132.24", port=8000)
         collection = client.get_or_create_collection("language_embeddings")
         embedder = SentenceTransformer("all-MiniLM-L6-v2")
         embedding = embedder.encode([text])[0]
