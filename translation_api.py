@@ -12,8 +12,10 @@ from datetime import timedelta
 from gtts import gTTS
 from dotenv import load_dotenv
 import time
+import json
 import subprocess
 from typing import Optional, Dict, Any
+import requests
 
 # Import our existing language detection and translation functions
 from lang_identifier import detect_language
@@ -76,6 +78,7 @@ class TranslationRequest(BaseModel):
     text: Optional[str] = None
     voiceKey: Optional[str] = None  # MinIO key for voice input
     chat_history: Optional[list] = None
+    actionType: Optional[str] = None  # Type of action to perform (e.g., "queryAgent")
     system_prompt: Optional[str] = """You are an AI assistant for a microfinance loan process system for joint liability groups. Follow these EXACT guidelines:
 
 1. LOAN AMOUNTS (ALWAYS USE THESE EXACT FIGURES):
@@ -109,6 +112,7 @@ class TranslationResponse(BaseModel):
     english_translation: str  # For debugging/verification
     english_response: str  # The English response before translation back
     is_transliteration: bool = False  # Whether the input was transliterated
+    queryAgentResult: Optional[Dict[str, Any]] = None  # Dashboard agent result as JSON
 
 # Language code mapping
 LANG_CODE_MAP = {
@@ -337,6 +341,75 @@ async def translate(request: TranslationRequest, background_tasks: BackgroundTas
             # Translate to English
             english_text = translate_to_english(request.text, lang_code)
             print(f"[Translated to English]: {english_text}")
+            
+            # Check if this is a dashboard agent query
+            if request.actionType == "queryAgent":
+                print(f"[Dashboard Agent]: Forwarding query to dashboard agent API")
+                try:
+                    # Call the dashboard agent API
+                    dashboard_response = requests.post(
+                        "http://13.201.208.156:8000/dashboard-agent",
+                        json={"question": english_text},
+                        headers={"Content-Type": "application/json"},
+                        timeout=60
+                    )
+                    
+                    if dashboard_response.status_code == 200:
+                        dashboard_result = dashboard_response.json()
+                        print(f"[Dashboard Agent Response]: {json.dumps(dashboard_result, indent=2)}")
+                        
+                        # Pass the english_text to GPT for a response
+                        gpt_prompt = f"Here is a user query: {english_text}. Respond with 'Sure, here are your results.' without asking for any additional information."
+                        gpt_response = get_gpt_response([{"role": "user", "content": gpt_prompt}])
+                            
+                        # Translate the GPT response back to the original language
+                        response = translate_back(gpt_response, lang_code)
+                        
+                        # Generate audio in background
+                        audio_id = None
+                        if minio_client:
+                            audio_id = str(uuid.uuid4())
+                            background_tasks.add_task(process_audio, response, lang_code, audio_id)
+                        
+                        # Return the response with dashboard result as separate JSON
+                        return TranslationResponse(
+                            detected_language=detected_lang,
+                            translated_text=response,
+                            audio_id=audio_id,
+                            english_translation=english_text,
+                            english_response=gpt_response,
+                            is_transliteration=is_transliteration,
+                            queryAgentResult=dashboard_result
+                        )
+                    else:
+                        error_msg = f"Dashboard agent returned status code {dashboard_response.status_code}"
+                        print(f"[Dashboard Agent Error]: {error_msg}")
+                        gpt_response = f"Sorry, I couldn't process your dashboard query. {error_msg}"
+                        response = translate_back(gpt_response, lang_code)
+                except Exception as e:
+                    print(f"[Dashboard Agent Error]: Failed to call dashboard agent: {str(e)}")
+                    gpt_response = f"Sorry, I couldn't connect to the dashboard agent. {str(e)}"
+                    response = translate_back(gpt_response, lang_code)
+                    
+                # Generate audio in background for error responses
+                audio_id = None
+                if minio_client and 'response' in locals():
+                    audio_id = str(uuid.uuid4())
+                    background_tasks.add_task(process_audio, response, lang_code, audio_id)
+                
+                # Return the error response if we have one
+                if 'response' in locals():
+                    return TranslationResponse(
+                        detected_language=detected_lang,
+                        translated_text=response,
+                        audio_id=audio_id,
+                        english_translation=english_text,
+                        english_response=gpt_response,
+                        is_transliteration=is_transliteration
+                    )
+                
+                # Otherwise, continue with normal GPT processing as fallback
+                print("[Dashboard Agent]: Falling back to normal GPT processing")
         except Exception as e:
             print(f"[Translation Error]: Failed to translate to English: {str(e)}")
             # Return a partial response with the detected language and transcribed text
@@ -348,34 +421,35 @@ async def translate(request: TranslationRequest, background_tasks: BackgroundTas
                 "audio_id": None
             }
         
-        # Generate response using GPT
-        try:
-            # First, create a chat history format that GPT can use
-            formatted_chat_history = []
-            if request.chat_history:
-                formatted_chat_history = request.chat_history
-            
-            # Add the current request to chat history
-            formatted_chat_history.append({"role": "user", "content": english_text})
-            
-            # Get response from GPT
-            gpt_response = get_gpt_response(formatted_chat_history)
-            print(f"[GPT Response in English]: {gpt_response}")
-            
-            # Translate GPT response back to original language
-            response = translate_back(gpt_response, lang_code)
-            print(f"[Response in {detected_lang.upper()}]: {response}")
-        except Exception as e:
-            print(f"[GPT/Translation Error]: Failed to generate or translate response: {str(e)}")
-            # Return a partial response with the detected language and English translation
-            return TranslationResponse(
-                detected_language=detected_lang,
-                translated_text=request.text,  # Return original text if translation fails
-                audio_id=None,
-                english_translation=english_text,
-                english_response="Sorry, I couldn't generate a response at this time.",
-                is_transliteration=is_transliteration
-            )
+        # Generate response using GPT (if not already handled by dashboard agent)
+        if request.actionType != "queryAgent":
+            try:
+                # First, create a chat history format that GPT can use
+                formatted_chat_history = []
+                if request.chat_history:
+                    formatted_chat_history = request.chat_history
+                
+                # Add the current request to chat history
+                formatted_chat_history.append({"role": "user", "content": english_text})
+                
+                # Get response from GPT
+                gpt_response = get_gpt_response(formatted_chat_history)
+                print(f"[GPT Response in English]: {gpt_response}")
+                
+                # Translate GPT response back to original language
+                response = translate_back(gpt_response, lang_code)
+                print(f"[Response in {detected_lang.upper()}]: {response}")
+            except Exception as e:
+                print(f"[GPT/Translation Error]: Failed to generate or translate response: {str(e)}")
+                # Return a partial response with the detected language and English translation
+                return TranslationResponse(
+                    detected_language=detected_lang,
+                    translated_text=request.text,  # Return original text if translation fails
+                    audio_id=None,
+                    english_translation=english_text,
+                    english_response="Sorry, I couldn't generate a response at this time.",
+                    is_transliteration=is_transliteration
+                )
         
         # Generate audio in background
         audio_id = None
