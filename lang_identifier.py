@@ -75,29 +75,39 @@ def transcribe(file_path="input.wav"):
 # --------------- Step 3: Detect Language ----------------
 def detect_language(text):
     """Detect language using embeddings and handle transliterated text."""
-    # Dictionary of common words/phrases for each language to help with transliterated text
-    language_indicators = {
-        "hindi": [
-            # Common Hindi words in transliteration
-            "kitna", "milega", "mujhe", "kaise", "kaisa", "kya", "hai", "hoga", "karenge", "karoge",
-            # Time indicators
-            "aaj", "kal", "parso", "abhi", "pehle", "baad",
-            # Loan-related Hindi terms
-            "loan", "amount", "kitne", "rupaye", "paise", "jankari", "kab", "milega", "chahiye",
-            # Financial terms that might be used in transliteration
-            "disbursement", "hua", "payment", "emi", "byaj", "interest", "account"
-        ],
-        "kannada": ["nanu", "nanage", "ninna", "hesaru", "beku", "illa", "enu", "yavaga", "hegide", "maadabeku"],
-        "tamil": ["enna", "enakku", "ungal", "peyar", "vendum", "illai", "eppozhuthu", "eppadi", "irukkirathu"],
-        "marathi": ["kiti", "milel", "mala", "kasa", "kay", "aahe", "hoil", "karanar", "karal", "pahije"]
-    }
-    
     text_lower = text.lower()
     text_words = text_lower.split()
     
-    # Check for transliterated words in each language with improved scoring
+    # Define common words/patterns for each language to help with transliteration detection
+    language_indicators = {
+        "hindi": ["mujhe", "kitna", "kya", "hai", "aap", "tum", "kaise", "kab", "kyun", "kaun", "kahan", "yeh", "woh", "main", "hum", "milega", "chahiye", "hua"],
+        "kannada": ["neevu", "hegiddira", "nanu", "nanna", "nim", "yenu", "ella", "beku", "illa", "illi", "anta", "ashtu", "ide"],
+        "tamil": ["neenga", "eppadi", "enna", "enaku", "unaku", "naan", "romba", "illa", "inge", "ange", "konjam", "venum"],
+        "marathi": ["tumhi", "kasa", "kay", "aahe", "mala", "tula", "mi", "amhi", "ithe", "tithe", "pahije"],
+        "english": ["how", "what", "when", "where", "why", "who", "will", "can", "could", "would", "should", "is", "are", "am", "get", "have", "much", "loan", "amount", "i", "you", "he", "she", "they", "we", "it", "this", "that", "these", "those"]
+    }
+    
+    # Check if text is in Latin script (transliterated)
+    is_latin_script = all(ord(c) < 128 for c in text if c.isalpha())
+    
+    # First check for English text patterns
+    if is_latin_script:
+        # Strong indicators for English
+        starts_with_english_question = any(text_lower.startswith(word) for word in ["how", "what", "when", "where", "why", "who"])
+        english_words = language_indicators["english"]
+        english_word_count = sum(1 for word in text_words if word in english_words)
+        english_word_ratio = english_word_count / len(text_words) if text_words else 0
+        
+        # If text starts with English question word or has high ratio of English words
+        if starts_with_english_question or english_word_ratio > 0.5:
+            print(f"[Detected Language]: english (word pattern analysis)")
+            return "english"
+    
+    # Check for direct language indicators in the text
     language_scores = {}
     for lang, indicators in language_indicators.items():
+        if lang == "english":  # Skip English as we've already checked it
+            continue
         score = sum(1 for word in indicators if word in text_words)
         if score > 0:
             language_scores[lang] = score
@@ -110,28 +120,61 @@ def detect_language(text):
     
     # Use embeddings for language detection as requested
     try:
-        client = chromadb.HttpClient(host="localhost", port=8000)
+        # Connect to local ChromaDB server
+        client = chromadb.HttpClient(host="localhost", port=8001)
         collection = client.get_or_create_collection("language_embeddings")
         embedder = SentenceTransformer("all-MiniLM-L6-v2")
         embedding = embedder.encode([text])[0]
-        result = collection.query(query_embeddings=[embedding], n_results=1)
+        
+        # Get top 3 results to improve detection accuracy
+        result = collection.query(query_embeddings=[embedding], n_results=3)
         if result and result["metadatas"]:
+            # Get the top detected language
             lang = result["metadatas"][0][0]["lang"]
             print("[Detected Language]:", lang)
             
-            # Special handling for Hindi phrases that might be detected as Tamil
-            # Check if text contains common Hindi words but was detected as Tamil
-            if lang == "tamil" and any(word in text_lower for word in language_indicators["hindi"]):
-                print("[Language Correction]: Detected as Tamil but contains Hindi words, correcting to Hindi")
+            # Double-check with embedding results
+            # If the top detected language is English and we've already checked for English patterns
+            # in the first part of the function, we can be confident it's English
+            if lang == "english":
+                print("[Confirmed Language]: english (embedding match)")
+                return "english"
+                
+            # For Hindi text in Devanagari script
+            if not all(ord(c) < 128 for c in text if c.isalpha()):
+                # If detected as Hindi and contains Devanagari characters
+                if lang == "hindi":
+                    print("[Confirmed Language]: hindi (Devanagari script)")
+                    return "hindi"
+                # Return whatever language was detected for non-Latin script
+                return lang
+            
+            # For transliterated text (Latin script)
+            # Get all detected languages from top 3 results
+            detected_langs = [result["metadatas"][0][i]["lang"] for i in range(min(3, len(result["metadatas"][0])))]            
+            print(f"[Top 3 detected languages]: {detected_langs}")
+            
+            # Enhanced detection for transliterated Hindi
+            hindi_indicators = language_indicators["hindi"]
+            has_hindi_words = any(word in text_lower for word in hindi_indicators)
+            
+            # If text contains Hindi indicators or was detected as Tamil but has Hindi words
+            if has_hindi_words or (lang == "tamil" and any(word in text_lower for word in hindi_indicators)):
+                print("[Language Correction]: Text contains Hindi words, setting to Hindi transliteration")
                 return "hindi transliteration"
             
-            # Mark transliterated text explicitly
-            if all(ord(c) < 128 for c in text):  # If text is in Latin script
-                if lang != "english":
-                    print(f"[Detected Language]: {lang} (transliterated text)")
-                    return f"{lang} transliteration"
+            # Final check for English
+            english_indicators = language_indicators["english"]
+            has_english_words = any(word in text_lower.split() for word in english_indicators)
+            if has_english_words and "english" in detected_langs:
+                print("[Language Correction]: Text contains English words and English is in top results")
+                return "english"
+                
+            # For other languages, mark as transliterated
+            if lang != "english":
+                print(f"[Detected Language]: {lang} (transliterated text)")
+                return f"{lang} transliteration"
             
-            # Don't fallback to English for Latin script - it might be transliterated
             return lang
     except Exception as e:
         print(f"[Embedding Detection Error]: {e}")

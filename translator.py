@@ -1,6 +1,7 @@
 from deep_translator import GoogleTranslator
 import sys
 import os
+import re
 from pathlib import Path
 
 # Add the utils directory to the path to import gemini_client
@@ -10,6 +11,45 @@ try:
 except ImportError:
     print("Warning: gemini_client module not found. Using only deep-translator.")
     get_gemini_response = None
+
+# Financial terminology dictionary for accurate translations
+FINANCIAL_TERMS = {
+    # English to Hindi mapping
+    "en_to_hi": {
+        "disbursement": "वितरण",
+        "loan": "ऋण",
+        "interest": "ब्याज",
+        "emi": "ईएमआई",
+        "repayment": "पुनर्भुगतान",
+        "principal": "मूलधन",
+        "collateral": "संपार्श्विक",
+        "credit score": "क्रेडिट स्कोर",
+        "joint liability group": "संयुक्त देयता समूह",
+        "microfinance": "माइक्रोफाइनेंस",
+        "borrower": "उधारकर्ता",
+        "lender": "ऋणदाता",
+        "default": "डिफ़ॉल्ट",
+        "tenure": "अवधि",
+        "processing fee": "प्रोसेसिंग शुल्क"
+    },
+    # Hindi transliteration to English mapping
+    "hi_trans_to_en": {
+        "disbursement": "disbursement",
+        "loan": "loan",
+        "byaj": "interest",
+        "emi": "EMI",
+        "repayment": "repayment",
+        "muldhaan": "principal",
+        "credit score": "credit score",
+        "sanyukt deyata samuh": "joint liability group",
+        "microfinance": "microfinance",
+        "udhaarkarta": "borrower",
+        "rindaata": "lender",
+        "default": "default",
+        "avadhi": "tenure",
+        "processing fee": "processing fee"
+    }
+}
 
 def translate_to_english(text, source_lang_code):
     """
@@ -84,17 +124,27 @@ def translate_to_english(text, source_lang_code):
         if is_transliteration and source_code == "hi":
             print(f"[DEBUG] Handling transliterated hindi text in Latin script")
             
-            # Check for financial terms in the text
+            # Process text to handle financial terms correctly
             text_lower = text.lower()
-            if "aaj kitna disbursement hua" in text_lower:
+            
+            # Replace financial terms with their correct English equivalents
+            for hindi_term, english_term in FINANCIAL_TERMS["hi_trans_to_en"].items():
+                # Use regex to find the term with word boundaries
+                text_lower = re.sub(r'\b' + re.escape(hindi_term) + r'\b', english_term, text_lower, flags=re.IGNORECASE)
+            
+            # Handle common query patterns
+            if re.search(r'aaj\s+kitna\s+disbursement\s+hua', text_lower):
                 print(f"[DEBUG] Detected query about today's disbursement")
                 return "How much disbursement was there today?"
-            elif "total kitna disbursement hua" in text_lower:
+            elif re.search(r'total\s+kitna\s+disbursement\s+hua', text_lower):
                 print(f"[DEBUG] Detected query about total disbursement")
                 return "What was the total disbursement amount?"
             elif "disbursement" in text_lower and "kitna" in text_lower:
                 print(f"[DEBUG] Detected query about disbursement amount")
                 return "How much was the disbursement?"
+            elif "loan" in text_lower and "kitna" in text_lower:
+                print(f"[DEBUG] Detected query about loan amount")
+                return "How much loan amount will I get?"
         
         print(f"[DEBUG] Using deep-translator with source='{source_code}', target='en'")
         translated = GoogleTranslator(source=source_code, target="en").translate(text)
@@ -192,22 +242,25 @@ def translate_back(text, target_lang_code):
         # that might be incorrectly detected as Tamil or other languages
         
         # For Hindi transliterated text with financial terms, we need special handling
-        if target_lang_code == "hi" and "transliteration" in text.lower():
-            print(f"[DEBUG] Special handling for Hindi transliterated financial terms")
+        if target_lang_code == "hi":
+            print(f"[DEBUG] Special handling for Hindi financial terms")
             # Preserve financial terms that shouldn't be translated literally
-            text = text.replace("disbursement", "DISBURSEMENT_PLACEHOLDER")
-            text = text.replace("loan", "LOAN_PLACEHOLDER")
-            text = text.replace("EMI", "EMI_PLACEHOLDER")
-            text = text.replace("interest", "INTEREST_PLACEHOLDER")
+            # Use regex with word boundaries to ensure we only replace whole words
+            for english_term, hindi_term in FINANCIAL_TERMS["en_to_hi"].items():
+                # Create a unique placeholder for each term
+                placeholder = f"__{english_term.upper().replace(' ', '_')}_PLACEHOLDER__"
+                # Replace the English term with the placeholder
+                text = re.sub(r'\b' + re.escape(english_term) + r'\b', placeholder, text, flags=re.IGNORECASE)
+                
+            # Continue with translation and then replace placeholders with correct Hindi terms
             
             # Perform the translation
             translated = GoogleTranslator(source="en", target=target_lang_code).translate(text)
             
-            # Restore the financial terms
-            translated = translated.replace("DISBURSEMENT_PLACEHOLDER", "डिसबर्समेंट")
-            translated = translated.replace("LOAN_PLACEHOLDER", "लोन")
-            translated = translated.replace("EMI_PLACEHOLDER", "ईएमआई")
-            translated = translated.replace("INTEREST_PLACEHOLDER", "ब्याज")
+            # Replace placeholders with correct Hindi terms
+            for english_term, hindi_term in FINANCIAL_TERMS["en_to_hi"].items():
+                placeholder = f"__{english_term.upper().replace(' ', '_')}_PLACEHOLDER__"
+                translated = translated.replace(placeholder, hindi_term)
         else:
             # Perform the regular translation
             translated = GoogleTranslator(source="en", target=target_lang_code).translate(text)
