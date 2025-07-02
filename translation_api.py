@@ -355,31 +355,52 @@ async def translate(request: TranslationRequest, background_tasks: BackgroundTas
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/audio/{audio_id}")
-async def get_audio(audio_id: str):
-    """Get the URL for the audio file with the given ID"""
+async def get_audio(audio_id: str, wait: bool = False, max_retries: int = 3):
+    """Get the URL for the audio file with the given ID
+    
+    Args:
+        audio_id: The ID of the audio file
+        wait: If True, wait for the audio to be available (retry a few times)
+        max_retries: Maximum number of retries if wait is True
+    """
     if not minio_client:
         raise HTTPException(status_code=500, detail="Minio client not initialized")
     
-    try:
-        bucket_name = os.getenv("MINIO_BUCKET", "indic-ai-audio")
-        object_name = f"{audio_id}.wav"
-        
-        # Check if object exists
-        minio_client.stat_object(bucket_name, object_name)
-        
-        # Generate presigned URL for the object
-        url = minio_client.presigned_get_object(
-            bucket_name, 
-            object_name,
-            expires=timedelta(hours=1)
-        )
-        
-        return {"audio_url": url}
-    except S3Error as e:
-        if e.code == "NoSuchKey":
-            # Audio might still be processing
-            raise HTTPException(status_code=404, detail="Audio not found or still processing")
-        raise HTTPException(status_code=500, detail=str(e))
+    bucket_name = os.getenv("MINIO_BUCKET", "indic-ai-audio")
+    object_name = f"{audio_id}.wav"
+    
+    # Try to get the audio URL with retries if wait is True
+    retries = 0
+    while retries <= max_retries:
+        try:
+            # Check if object exists
+            minio_client.stat_object(bucket_name, object_name)
+            
+            # Generate presigned URL for the object
+            url = minio_client.presigned_get_object(
+                bucket_name, 
+                object_name,
+                expires=timedelta(hours=1)
+            )
+            
+            return {"audio_url": url, "status": "ready"}
+        except S3Error as e:
+            if e.code == "NoSuchKey":
+                # Audio might still be processing
+                if wait and retries < max_retries:
+                    # Wait and retry
+                    retries += 1
+                    time.sleep(1)  # Wait for 1 second before retrying
+                    continue
+                else:
+                    # Return a status indicating the audio is still processing
+                    return {"status": "processing", "message": "Audio is still being processed", "retry_after": 2}
+            else:
+                # Other S3 errors
+                raise HTTPException(status_code=500, detail=f"Error accessing MinIO: {str(e)}")
+    
+    # If we've exhausted all retries
+    raise HTTPException(status_code=404, detail="Audio not found after maximum retries")
 
 @app.get("/health")
 async def health_check():
