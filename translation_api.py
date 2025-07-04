@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, validator
 import uuid
 import os
@@ -30,6 +31,15 @@ load_dotenv()
 
 # Initialize FastAPI app
 app = FastAPI(title="Indic AI Translation API", description="Translation API with voice input support for Indic languages")
+
+# Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
+)
 
 # Initialize Minio client (optional)
 minio_client = None
